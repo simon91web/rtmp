@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>360 Stream Player</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #111; color: #eee; padding: 1rem; }
+    h1 { margin-bottom: 0.5rem; font-size: 1.4rem; }
+    .controls { margin-bottom: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+    .controls select, .controls button {
+      padding: 0.4rem; border-radius: 4px; border: 1px solid #555; background: #222; color: #eee;
+    }
+    .controls button { background: #2563eb; border: none; color: #fff; cursor: pointer; padding: 0.4rem 1rem; }
+    .controls button:hover { background: #1d4ed8; }
+    .status { font-size: 0.85rem; color: #aaa; margin: 0.5rem 0; }
+    #log { font-size: 0.75rem; color: #666; margin-top: 0.5rem; max-height: 80px; overflow-y: auto; font-family: monospace; }
+    video { width: 100%; max-width: 960px; background: #000; border-radius: 4px; display: block; }
+    #vr-container { width: 100%; height: 70vh; max-height: 600px; display: none; border-radius: 4px; overflow: hidden; }
+  </style>
+</head>
+<body>
+  <h1>360 Stream Player</h1>
+
+  <div class="controls">
+    <select id="viewMode" onchange="switchView()">
+      <option value="flat">Flat View</option>
+      <option value="360">360 VR View</option>
+    </select>
+    <button onclick="play()">Play</button>
+    <button onclick="stop()">Stop</button>
+  </div>
+  <div class="status" id="status">Not connected</div>
+  <div id="log"></div>
+
+  <video id="video" controls autoplay muted playsinline crossorigin="anonymous"></video>
+  <div id="vr-container"></div>
+
+  <script>
+    const host = location.host; // includes port
+    const proto = location.protocol;
+    const hlsUrl = `${proto}//${host}/stream.m3u8`;
+
+    const statusEl = document.getElementById('status');
+    const logEl = document.getElementById('log');
+    const video = document.getElementById('video');
+    let hlsPlayer = null;
+
+    function log(msg) {
+      const line = document.createElement('div');
+      line.textContent = `${new Date().toLocaleTimeString()} ${msg}`;
+      logEl.prepend(line);
+      while (logEl.children.length > 20) logEl.removeChild(logEl.lastChild);
+    }
+
+    function switchView() {
+      const mode = document.getElementById('viewMode').value;
+      if (mode === '360') {
+        video.style.display = 'none';
+        document.getElementById('vr-container').style.display = 'block';
+        log('Loading A-Frame for 360 view...');
+        if (!window.AFRAME) {
+          const script = document.createElement('script');
+          script.src = 'https://aframe.io/releases/1.6.0/aframe.min.js';
+          script.onload = () => { log('A-Frame loaded'); setup360(); };
+          document.head.appendChild(script);
+        } else {
+          setup360();
+        }
+      } else {
+        video.style.display = 'block';
+        document.getElementById('vr-container').style.display = 'none';
+        document.getElementById('vr-container').innerHTML = '';
+      }
+    }
+
+    function setup360() {
+      const container = document.getElementById('vr-container');
+      container.innerHTML = `
+        <a-scene embedded vr-mode-ui="enabled: true" loading-screen="enabled: false" style="width:100%;height:100%">
+          <a-videosphere src="#video" rotation="0 180 0"></a-videosphere>
+          <a-camera wasd-controls="enabled: false"></a-camera>
+        </a-scene>
+      `;
+      log('360 scene ready');
+      if (!hlsPlayer) play();
+    }
+
+    function stop() {
+      if (hlsPlayer) {
+        hlsPlayer.destroy();
+        hlsPlayer = null;
+      }
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      statusEl.textContent = 'Stopped';
+      log('Stopped');
+    }
+
+    function play() {
+      stop();
+      statusEl.textContent = `Connecting: ${hlsUrl}`;
+      log(`Connecting to ${hlsUrl}`);
+
+      // Native HLS (Safari, iOS)
+      if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = hlsUrl;
+        video.play().then(() => {
+          statusEl.textContent = `Playing (native HLS)`;
+          log('Playing via native HLS');
+        }).catch(err => {
+          log(`Play error: ${err.message}`);
+          statusEl.textContent = `Error: ${err.message}`;
+        });
+        return;
+      }
+
+      // hls.js
+      if (!Hls.isSupported()) {
+        statusEl.textContent = 'HLS not supported in this browser.';
+        log('HLS not supported');
+        return;
+      }
+
+      hlsPlayer = new Hls({
+        liveSyncDuration: 1,
+        liveMaxLatencyDuration: 3,
+        liveDurationInfinity: true,
+        manifestLoadingTimeOut: 5000,
+        manifestLoadingMaxRetry: 50,
+        manifestLoadingRetryDelay: 1000,
+      });
+
+      hlsPlayer.loadSource(hlsUrl);
+      hlsPlayer.attachMedia(video);
+
+      hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => {
+        log('HLS manifest loaded, playing');
+        video.play().then(() => {
+          statusEl.textContent = 'Playing';
+          log('Playing');
+        }).catch(err => {
+          log(`Play error: ${err.message}`);
+          statusEl.textContent = `Click video to play (${err.message})`;
+        });
+      });
+
+      hlsPlayer.on(Hls.Events.ERROR, (_, data) => {
+        log(`HLS error: ${data.type} ${data.details}`);
+        if (data.details === 'manifestLoadError' || data.details === 'manifestLoadTimeOut') {
+          statusEl.textContent = 'Waiting for stream... (retrying)';
+        } else if (data.fatal) {
+          statusEl.textContent = `Fatal error: ${data.details}`;
+        }
+      });
+    }
+
+    switchView();
+    play();
+  </script>
+</body>
+</html>

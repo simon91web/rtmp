@@ -88,6 +88,7 @@ if (!noCapture) {
   console.log(`[capture] Starting webcam capture from "${cameraName}"...`);
   ffmpegProc = spawn(ffmpegPath, [
     "-f", "dshow",
+    "-video_size", "2880x1440",
     "-i", `video=${cameraName}`,
     "-c:v", "libx264",
     "-preset", "ultrafast",

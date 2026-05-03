@@ -28,6 +28,7 @@ const MIME = {
   ".html": "text/html",
   ".m3u8": "application/vnd.apple.mpegurl",
   ".ts": "video/mp2t",
+  ".js": "application/javascript",
 };
 
 function handler(req, res) {
@@ -41,6 +42,14 @@ function handler(req, res) {
   if (req.url === "/" || req.url === "/player.html") {
     res.writeHead(200, { ...headers, "Content-Type": "text/html" });
     res.end(fs.readFileSync(playerPath));
+    return;
+  }
+
+  // Static JS libs
+  if (req.url === "/hls.min.js" || req.url === "/aframe.min.js") {
+    const filePath = path.join(__dirname, "media", path.basename(req.url));
+    res.writeHead(200, { ...headers, "Content-Type": "application/javascript" });
+    res.end(fs.readFileSync(filePath));
     return;
   }
 
@@ -88,8 +97,11 @@ if (!noCapture) {
   console.log(`[capture] Starting webcam capture from "${cameraName}"...`);
   ffmpegProc = spawn(ffmpegPath, [
     "-f", "dshow",
+    "-rtbufsize", "200M",
     "-video_size", "2880x1440",
+    "-vcodec", "mjpeg",
     "-i", `video=${cameraName}`,
+    "-vf", "format=yuv420p",
     "-c:v", "libx264",
     "-preset", "ultrafast",
     "-tune", "zerolatency",
